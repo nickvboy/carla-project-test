@@ -81,7 +81,3 @@ The simulator script `carla_simulator.py` contains default settings for various 
 - **Speed Monitoring**: Display current speed and monitor speed violations.
 - **Trial Runs**: Start and participate in trial runs with countdown and result displays.
 - **Debug Menu**: Toggle debug menu to view vehicle's location and rotation.
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
