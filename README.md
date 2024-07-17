@@ -32,6 +32,13 @@ This project is a CARLA Simulator that allows you to drive a vehicle in a simula
     python carla_simulator.py
     ```
 
+3. **Start Time Trials**:
+
+    - Press `1` to activate the trial run screen.
+    - Press `Space` to start the countdown for the trial run.
+    - Once the countdown ends, the trial run begins and the timer starts.
+    - Press `Space` again to stop the trial run and display the results.
+
 ## Configuration
 
 The simulator script `carla_simulator.py` contains default settings for various parameters. You can modify these parameters in the `main()` function of the script:
@@ -81,3 +88,7 @@ The simulator script `carla_simulator.py` contains default settings for various 
 - **Speed Monitoring**: Display current speed and monitor speed violations.
 - **Trial Runs**: Start and participate in trial runs with countdown and result displays.
 - **Debug Menu**: Toggle debug menu to view vehicle's location and rotation.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
