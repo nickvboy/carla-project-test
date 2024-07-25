@@ -1,3 +1,4 @@
+
 # CARLA Simulator
 
 This project is a CARLA Simulator that allows you to drive a vehicle in a simulated environment, experiment with different weather conditions, and participate in trial runs while monitoring speed and other parameters.
@@ -11,33 +12,34 @@ This project is a CARLA Simulator that allows you to drive a vehicle in a simula
 
 ## Installation
 
-1. **CARLA Simulator**: Download and install CARLA Simulator from the [official website](https://carla.org/).
-2. **Python Dependencies**: Install the required Python packages using pip:
+### CARLA Simulator
+Download and install CARLA Simulator from the official website.
 
-    ```bash
-    pip install pygame numpy
-    ```
+### Python Dependencies
+Install the required Python packages using pip:
+```bash
+pip install pygame numpy
+```
 
 ## Usage
 
-1. **Start the CARLA Server**: Launch the CARLA server on your machine.
+### Start the CARLA Server
+Launch the CARLA server on your machine.
+```bash
+./CarlaUE4.sh
+```
 
-    ```bash
-    ./CarlaUE4.sh
-    ```
+### Run the Simulator
+Execute the Python script to start the CARLA Simulator.
+```bash
+python carla_simulator.py
+```
 
-2. **Run the Simulator**: Execute the Python script to start the CARLA Simulator.
-
-    ```bash
-    python carla_simulator.py
-    ```
-
-3. **Start Time Trials**:
-
-    - Press `1` to activate the trial run screen.
-    - Press `Space` to start the countdown for the trial run.
-    - Once the countdown ends, the trial run begins and the timer starts.
-    - Press `Space` again to stop the trial run and display the results.
+### Start Time Trials
+- Press 1 to activate the trial run screen.
+- Press Space to start the countdown for the trial run.
+- Once the countdown ends, the trial run begins and the timer starts.
+- Press Space again to stop the trial run and display the results.
 
 ## Configuration
 
@@ -59,32 +61,32 @@ The simulator script `carla_simulator.py` contains default settings for various 
 
 ## Controls
 
-- **Keyboard Controls**:
-  - `W`: Throttle
-  - `S`: Brake
-  - `A`: Steer left
-  - `D`: Steer right
-  - `R`: Change vehicle
-  - `Space`: Hand brake / Start trial run / Stop trial run
-  - `T`: Switch camera view
-  - `Q`: Toggle reverse
-  - `C`: Change weather
-  - `M`: Toggle debug menu
-  - `1`: Start trial run
+### Keyboard Controls:
+- W: Throttle
+- S: Brake
+- A: Steer left
+- D: Steer right
+- R: Change vehicle
+- Space: Hand brake / Start trial run / Stop trial run
+- T: Switch camera view
+- Q: Toggle reverse
+- C: Change weather
+- M: Toggle debug menu
+- 1: Start trial run
 
-- **Gamepad Controls**:
-  - Left stick (horizontal): Steering
-  - Right trigger: Throttle
-  - Left trigger: Brake
-  - `A` button: Forward gear
-  - `B` button: Reverse gear
-  - `X` button: Hand brake
-  - `Y` button: Change camera view
-  - `X` button (weather change)
+### Gamepad Controls:
+- Left stick (horizontal): Steering
+- Right trigger: Throttle
+- Left trigger: Brake
+- A button: Forward gear
+- B button: Reverse gear
+- X button: Hand brake
+- Y button: Change camera view
+- X button (weather change)
 
 ## Features
 
-- **Weather Presets**: Switch between sunny, rainy, and foggy weather.
-- **Speed Monitoring**: Display current speed and monitor speed violations.
-- **Trial Runs**: Start and participate in trial runs with countdown and result displays.
-- **Debug Menu**: Toggle debug menu to view vehicle's location and rotation.
+- Weather Presets: Switch between sunny, rainy, and foggy weather.
+- Speed Monitoring: Display current speed and monitor speed violations.
+- Trial Runs: Start and participate in trial runs with countdown and result displays.
+- Debug Menu: Toggle debug menu to view vehicle's location and rotation.
