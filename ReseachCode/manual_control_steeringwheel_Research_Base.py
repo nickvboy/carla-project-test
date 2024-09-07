@@ -10,6 +10,9 @@ import random
 import re
 import weakref
 import time
+import string
+import json
+import csv
 from configparser import ConfigParser
 
 try:
@@ -41,8 +44,21 @@ except ImportError:
 
 class ConfigHandler:
     def __init__(self, config_file='user_config.ini'):
-        self.config_file = config_file
+        self.config_file = self.find_config_file(config_file)
         self.config = ConfigParser()
+
+    def find_config_file(self, config_file):
+        """Searches for the config file starting from the script's location upwards."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        while True:
+            config_path = os.path.join(current_dir, config_file)
+            if os.path.isfile(config_path):
+                return config_path
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir == current_dir:  # Root directory reached
+                break
+            current_dir = parent_dir
+        raise FileNotFoundError(f"{config_file} not found.")
 
     def load_config(self):
         self.config.read(self.config_file)
@@ -134,6 +150,7 @@ class ConfigHandler:
         if self.config.has_section(section):
             return self.config.get(section, option, fallback=fallback)
         return fallback
+
 
 
 def find_weather_presets():
@@ -262,6 +279,7 @@ class World(object):
         if self.player is not None:
             self.player.destroy()
 
+
 class DualControl(object):
     def __init__(self, world, start_in_autopilot):
         self._autopilot_enabled = start_in_autopilot
@@ -279,10 +297,6 @@ class DualControl(object):
         self.steering_damping = self.axis_mapping.get('steering_damping', 0.5)
         self.throttle_damping = self.axis_mapping.get('throttle_damping', 1.0)
         self.brake_damping = self.axis_mapping.get('brake_damping', 1.0)
-
-        self.transmission_mode = 'automatic'
-        self._shifter_mode = False
-        self._neutral_mode = False
 
         world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
@@ -317,7 +331,7 @@ class DualControl(object):
         
         return axis_mapping, key_mapping
 
-    def parse_events(self, world, clock):
+    def parse_events(self, world, clock, trial_manager):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -327,6 +341,8 @@ class DualControl(object):
                 if self._is_quit_shortcut(event.key):
                     return True
                 self._handle_key(event, world)
+            elif event.type in (pygame.MOUSEBUTTONDOWN, pygame.KEYDOWN):
+                trial_manager.handle_event(event)  # Integrate handle_event here
 
         if not self._autopilot_enabled:
             if isinstance(self._control, carla.VehicleControl):
@@ -353,15 +369,6 @@ class DualControl(object):
             world.hud.toggle_info()
         elif self.axis_mapping['toggle_headlights']['joystick'] is not None and event.button == self.axis_mapping['toggle_headlights']['joystick']:
             world.toggle_headlights()
-        elif self._shifter_mode and self.axis_mapping['shifter_drive']['joystick'] is not None and event.button == self.axis_mapping['shifter_drive']['joystick']:
-            self._neutral_mode = False
-            self._control.gear = 1
-        elif self._shifter_mode and self.axis_mapping['shifter_neutral']['joystick'] is not None and event.button == self.axis_mapping['shifter_neutral']['joystick']:
-            self._neutral_mode = True
-            self._control.gear = 0
-        elif self._shifter_mode and self.axis_mapping['shifter_reverse']['joystick'] is not None and event.button == self.axis_mapping['shifter_reverse']['joystick']:
-            self._neutral_mode = False
-            self._control.gear = -1
         elif event.button == 0:
             world.restart()
         elif event.button == 1:
@@ -404,20 +411,14 @@ class DualControl(object):
             if event.key == pygame.K_q:
                 self._control.gear = 1 if self._control.reverse else -1
             elif event.key == pygame.K_m:
-                if self.transmission_mode == 'automatic':
-                    self.transmission_mode = 'manual'
-                    self._control.manual_gear_shift = True
-                elif self.transmission_mode == 'manual':
-                    self.transmission_mode = 'automatic_shifter'
-                    self._shifter_mode = True
-                    self._neutral_mode = False
+                if self._control.manual_gear_shift:
                     self._control.manual_gear_shift = False
+                    self._control.gear = world.player.get_control().gear
+                    world.hud.notification('Automatic Transmission')
                 else:
-                    self.transmission_mode = 'automatic'
-                    self._shifter_mode = False
-                    self._neutral_mode = False
-                    self._control.manual_gear_shift = False
-                world.hud.notification('%s Transmission' % ('Automatic' if self.transmission_mode == 'automatic' else 'Manual' if self.transmission_mode == 'manual' else 'Automatic Shifter'))
+                    self._control.manual_gear_shift = True
+                    self._control.gear = world.player.get_control().gear
+                    world.hud.notification('Manual Transmission')
             elif self._control.manual_gear_shift and event.key == pygame.K_COMMA:
                 self._control.gear = max(-1, self._control.gear - 1)
             elif self._control.manual_gear_shift and event.key == pygame.K_PERIOD:
@@ -439,10 +440,7 @@ class DualControl(object):
         world.player.set_light_state(carla.VehicleLightState(new_state))
 
     def _parse_vehicle_keys(self, keys, milliseconds):
-        if not self._neutral_mode:
-            self._control.throttle = 1.0 if keys[pygame.K_UP] or keys[pygame.K_w] else 0.0
-        else:
-            self._control.throttle = 0.0
+        self._control.throttle = 1.0 if keys[pygame.K_UP] or keys[pygame.K_w] else 0.0
         steer_increment = 5e-4 * milliseconds
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             self._steer_cache -= steer_increment
@@ -474,10 +472,7 @@ class DualControl(object):
 
             self._control.steer = steerCmd
             self._control.brake = brakeCmd
-            if not self._neutral_mode:
-                self._control.throttle = throttleCmd
-            else:
-                self._control.throttle = 0.0
+            self._control.throttle = throttleCmd
 
     def _parse_walker_keys(self, keys, milliseconds):
         self._control.speed = 0.0
@@ -892,9 +887,18 @@ class CameraManager(object):
         if self.recording:
             image.save_to_disk('_out/%08d' % image.frame)
 
-
 class TrialManager:
-    def __init__(self, hud, config_handler):
+    def __init__(self, hud, config_handler, player, world):
+        # Initialize the data directory first
+        self.data_dir = os.path.join(os.path.dirname(__file__), 'scripts', 'data')
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+        
+        # Initialize the violation events CSV file path
+        self.events_csv_file_path = self.get_events_csv_file_path()
+        self.init_events_csv()
+
+        # Now proceed with the rest of the initialization
         self.hud = hud
         self.trial_active = False
         self.start_time = None
@@ -912,6 +916,115 @@ class TrialManager:
         self.speeding_warning = False
         self.max_speed_during_run = 0.0
         self.min_speed_during_run = float('inf')
+
+        # World and weather presets
+        self.world = world
+        self.weather_preset = world._weather_presets[world._weather_index][1]
+
+        # Session and trial codes
+        self.session_code = self.generate_code()  # Generate once per session
+        self.trial_code = None
+
+        # User name management
+        self.user_name = ""
+        self.new_user_name = ""  # For adding a new user
+        self.user_names = []
+        self.active_input = False  # To track if the text box is active for input
+        self.dropdown_open = False  # To track if the dropdown is open
+        self.load_user_names()  # Load user names from memory file
+        self.selected_name_index = len(self.user_names) - 1  # Automatically select the last used name
+        if self.selected_name_index >= 0:
+            self.user_name = self.user_names[self.selected_name_index]
+
+        # Initialize data_to_write list
+        self.data_to_write = []  # List to store data to be written to CSV
+
+        # Open today's file or create a new one
+        self.csv_file_path = self.get_daily_csv_file_path()
+        self.csv_file = open(self.csv_file_path, 'a', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+        
+        # Write the header to the CSV only if the file is new/empty
+        if os.path.getsize(self.csv_file_path) == 0:
+            self.csv_writer.writerow([
+                'User Name', 'Session Code', 'Trial Code', 'Unix Timestamp',
+                'Time Elapsed', 'Speed', 'X', 'Y', 'Z', 'Pitch', 'Yaw', 'Roll', 'Heading (Degrees)', 'Heading (Cardinal)', 'Vehicle'
+            ])
+
+        # Store the vehicle type
+        self.vehicle_type = get_actor_display_name(player)
+
+    def get_events_csv_file_path(self):
+        """Generate a file path for the events CSV file based on the current date."""
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        return os.path.join(self.data_dir, f'Trial_events_{date_str}.csv')
+
+    def init_events_csv(self):
+        """Initialize the events CSV file with a header if it doesn't exist."""
+        if not os.path.exists(self.events_csv_file_path) or os.path.getsize(self.events_csv_file_path) == 0:
+            with open(self.events_csv_file_path, 'a', newline='') as events_file:
+                events_writer = csv.writer(events_file)
+                events_writer.writerow([
+                    'Session Code', 'Trial Code', 'Unix Timestamp',
+                    'Event Type', 'Violation Duration', 'X', 'Y', 'Z', 'Pitch', 'Yaw', 'Roll'
+                ])
+
+    def record_event(self, event_type, violation_duration, location, rotation):
+        """Record an event in the events CSV file."""
+        timestamp = int(time.time())
+        with open(self.events_csv_file_path, 'a', newline='') as events_file:
+            events_writer = csv.writer(events_file)
+            events_writer.writerow([
+                self.session_code, self.trial_code, timestamp,
+                event_type, violation_duration, location.x, location.y, location.z, 
+                rotation.pitch, rotation.yaw, rotation.roll
+            ])
+
+    def generate_code(self, length=8):
+        """Generates a random code of letters and digits."""
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+    def get_daily_csv_file_path(self):
+        # Generate a file name based on the current date
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        return os.path.join(self.data_dir, f'runs_data_{date_str}.csv')
+
+    def get_totals_csv_file_path(self):
+        date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        return os.path.join(self.data_dir, f'totals_data_{date_str}.csv')
+
+    def load_user_names(self):
+        """Load user names from the memory file."""
+        memory_dir = os.path.join(self.data_dir, 'memory')
+        memory_file = os.path.join(memory_dir, 'user_names.json')
+
+        # Ensure the 'memory' directory exists
+        if not os.path.exists(memory_dir):
+            os.makedirs(memory_dir)
+
+        # Clear current list of names to avoid residuals
+        self.user_names = []
+
+        # Load names from the memory file if it exists
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r') as file:
+                self.user_names = json.load(file)
+                print(f"Loaded user names from memory: {self.user_names}")
+                self.selected_name_index = len(self.user_names) - 1  # Auto-load the last used name
+        else:
+            print("Memory file not found or empty.")
+
+    def save_user_name(self, name):
+        """Add a new user name to the memory file and update the dropdown list."""
+        if name and name not in self.user_names:
+            self.user_names.append(name)
+            memory_dir = os.path.join(self.data_dir, 'memory')
+            memory_file = os.path.join(memory_dir, 'user_names.json')
+            with open(memory_file, 'w') as file:
+                json.dump(self.user_names, file)
+            print(f"Added new user name: {name}")
+        self.user_name = name
+        self.selected_name_index = self.user_names.index(name)  # Set the selected name in the dropdown
 
     def start_trial(self, player):
         self.start_screen = True
@@ -943,11 +1056,24 @@ class TrialManager:
         self.max_speed_during_run = 0.0
         self.min_speed_during_run = float('inf')
 
+        # Generate a new trial code for this trial
+        self.trial_code = self.generate_code()
+
     def end_trial(self):
         self.trial_active = False
         self.end_time = time.time()
         self.calculate_results()
         self.display_results = True
+
+        # Write the collected data to the CSV file
+        if self.csv_file and self.csv_writer:
+            self.csv_writer.writerows(self.data_to_write)
+
+        # Reset the data_to_write list for the next trial
+        self.data_to_write = []
+
+        # Write totals to the totals CSV file
+        self.write_totals_to_csv()
 
     def calculate_results(self):
         trial_duration = self.end_time - self.start_time
@@ -961,7 +1087,33 @@ class TrialManager:
             'violation_count': self.violation_count
         }
 
-    def track_speed(self, speed):
+    def write_totals_to_csv(self):
+        totals_csv_path = self.get_totals_csv_file_path()
+        trial_start_date = datetime.datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S')
+        with open(totals_csv_path, 'a', newline='') as totals_file:
+            totals_writer = csv.writer(totals_file)
+            if os.path.getsize(totals_csv_path) == 0:
+                totals_writer.writerow([
+                    'User Name', 'Session Code', 'Trial Code', 'Trial Start Date', 'Trial Duration',
+                    'Average Speed', 'Max Speed', 'Min Speed', 'Violation Count', 
+                    'Average Violation Duration', 'Vehicle', 'Weather Preset'
+                ])
+            totals_writer.writerow([
+                self.user_name,
+                self.session_code,
+                self.trial_code,
+                trial_start_date,
+                self.format_time(self.trial_results['trial_duration']),
+                round(self.trial_results['avg_speed'], 2),  # Store as floating point
+                round(self.max_speed_during_run, 2),  # Store as floating point
+                round(self.min_speed_during_run, 2),  # Store as floating point
+                self.trial_results['violation_count'],
+                f"{self.trial_results['avg_violation_duration']:.2f} seconds",
+                self.vehicle_type,
+                self.weather_preset
+            ])
+
+    def track_speed(self, speed, player):
         self.current_speed = speed
         if self.trial_active:
             self.max_speed_during_run = max(self.max_speed_during_run, speed)
@@ -976,20 +1128,54 @@ class TrialManager:
                 if self.violation_start is not None:
                     violation_end = time.time()
                     violation_duration = violation_end - self.violation_start
+                    location = player.get_transform().location
+                    rotation = player.get_transform().rotation
                     self.violation_durations.append((violation_duration, speed))
+                    # Record the violation event
+                    self.record_event('violation', violation_duration, location, rotation)
                     self.violation_start = None
                 self.speeding_warning = False
+
+            # Collect data every 500 milliseconds
+            if time.time() - self.start_time >= len(self.data_to_write) * 0.5:
+                location = player.get_transform().location
+                rotation = player.get_transform().rotation
+                timestamp = int(time.time())
+
+                # Calculate heading (in degrees) and cardinal direction
+                heading_degrees = rotation.yaw
+                heading_cardinal = self.calculate_heading_cardinal(rotation.yaw)
+                
+                # Add data row with the new columns
+                self.data_to_write.append([
+                    self.user_name, self.session_code, self.trial_code, timestamp,
+                    round(time.time() - self.start_time, 2), speed,  # Store as floating point
+                    location.x, location.y, location.z,
+                    rotation.pitch, rotation.yaw, rotation.roll,
+                    heading_degrees, heading_cardinal, self.vehicle_type
+                ])
+    
+    @staticmethod
+    def calculate_heading_cardinal(yaw):
+        if abs(yaw) < 45:
+            return 'N'
+        elif 45 <= yaw < 135:
+            return 'E'
+        elif abs(yaw) >= 135:
+            return 'S'
+        else:
+            return 'W'
 
     def render_results(self, display):
         if self.display_results:
             font = pygame.font.Font(None, 36)
             results_text = [
                 f"Trial Duration: {self.format_time(self.trial_results['trial_duration'])}",
-                f"Average Speed: {self.trial_results['avg_speed']:.2f} mph",
+                f"Average Speed: {int(round(self.trial_results['avg_speed']))}",  # Display as integer
                 f"Average Violation Duration: {self.trial_results['avg_violation_duration']:.2f} seconds",
                 f"Violation Count: {self.trial_results['violation_count']}",
-                f"Max Speed: {self.max_speed_during_run:.2f} mph",
-                f"Min Speed: {self.min_speed_during_run:.2f} mph"
+                f"Max Speed: {int(round(self.max_speed_during_run))}",  # Display as integer
+                f"Min Speed: {int(round(self.min_speed_during_run))}"  # Display as integer
             ]
             background = pygame.Surface((display.get_width(), display.get_height()))
             background.fill((0, 0, 0))
@@ -1012,6 +1198,86 @@ class TrialManager:
             display.blit(background, (0, 0))
             display.blit(text_surface, (display.get_width() // 2 - text_surface.get_width() // 2, display.get_height() // 2 - text_surface.get_height() // 2))
 
+            # Draw the text box and dropdown for the username
+            self.render_name_input(display)
+
+    def render_name_input(self, display):
+        font = pygame.font.Font(None, 32)
+        input_box = pygame.Rect(640 - 100, 360 + 50, 200, 32)
+        add_button = pygame.Rect(input_box.x + 210, input_box.y, 80, 32)
+        dropdown_rect = pygame.Rect(640 - 100, 360 + 82, 200, len(self.user_names) * 32)
+
+        pygame.draw.rect(display, (255, 255, 255), input_box, 0)
+        pygame.draw.rect(display, (0, 0, 0), input_box, 2)
+        pygame.draw.rect(display, (0, 0, 0), add_button, 2)
+
+        text_color = (0, 0, 0) if self.active_input else (0, 0, 0)
+        name_surface = font.render(self.new_user_name if self.active_input else self.user_name, True, text_color)
+        display.blit(name_surface, (input_box.x + 5, input_box.y + 5))
+
+        add_text = font.render("Add", True, (0, 0, 0))
+        display.blit(add_text, (add_button.x + 5, add_button.y + 5))
+
+        # Draw dropdown list
+        if self.dropdown_open:
+            pygame.draw.rect(display, (255, 255, 255), dropdown_rect, 0)
+            pygame.draw.rect(display, (0, 0, 0), dropdown_rect, 2)
+            for i, name in enumerate(self.user_names):
+                name_surface = font.render(name, True, (0, 0, 0))
+                display.blit(name_surface, (dropdown_rect.x + 5, dropdown_rect.y + 5 + i * 32))
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_RETURN:
+                if self.display_results:
+                    self.display_results = False  # Just close the results screen
+                    return  # Don't start a new trial immediately
+                elif self.start_screen:
+                    self.initiate_trial()
+            elif event.key == pygame.K_SPACE and self.trial_active:
+                self.end_trial()
+            # Handle other events...
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            input_box = pygame.Rect(640 - 100, 360 + 50, 200, 32)
+            add_button = pygame.Rect(input_box.x + 210, input_box.y, 80, 32)
+            dropdown_rect = pygame.Rect(640 - 100, 360 + 82, 200, len(self.user_names) * 32)
+            if input_box.collidepoint(event.pos):
+                self.active_input = True
+                self.dropdown_open = not self.dropdown_open  # Toggle dropdown visibility when clicking on the input box
+            elif add_button.collidepoint(event.pos):
+                if self.new_user_name.strip():  # Ensure that the user name is not empty
+                    self.save_user_name(self.new_user_name)
+                    self.new_user_name = ""  # Clear the input after saving
+                self.dropdown_open = False
+            elif dropdown_rect.collidepoint(event.pos) and self.dropdown_open:
+                relative_y = event.pos[1] - dropdown_rect.y
+                self.selected_name_index = relative_y // 32
+                self.user_name = self.user_names[self.selected_name_index]
+                self.dropdown_open = False
+            else:
+                self.active_input = False
+                self.dropdown_open = False
+
+        if event.type == pygame.KEYDOWN:
+            if self.active_input:
+                if event.key == pygame.K_RETURN:
+                    if self.new_user_name.strip():  # Ensure that the user name is not empty
+                        self.save_user_name(self.new_user_name)
+                        self.new_user_name = ""  # Clear the input after saving
+                    self.active_input = False
+                elif event.key == pygame.K_BACKSPACE:
+                    self.new_user_name = self.new_user_name[:-1]
+                else:
+                    self.new_user_name += event.unicode
+            elif self.dropdown_open:
+                if event.key == pygame.K_DOWN:
+                    self.selected_name_index = (self.selected_name_index + 1) % len(self.user_names)
+                    self.user_name = self.user_names[self.selected_name_index]
+                elif event.key == pygame.K_UP:
+                    self.selected_name_index = (self.selected_name_index - 1) % len(self.user_names)
+                    self.user_name = self.user_names[self.selected_name_index]
+
     def render_timer(self, display):
         if self.trial_active:
             font = pygame.font.Font(None, 36)
@@ -1019,9 +1285,11 @@ class TrialManager:
             timer_text = f"Time: {self.format_time(elapsed_time)}"
             text_surface = font.render(timer_text, True, (255, 255, 255))
             display.blit(text_surface, (display.get_width() - text_surface.get_width() - 20, 20))
-            speed_text = f"Speed: {self.current_speed:.2f} mph"
+            
+            speed_text = f"Speed: {int(round(self.current_speed))} mph"  # Display as integer
             speed_surface = font.render(speed_text, True, (255, 255, 255))
             display.blit(speed_surface, (display.get_width() - speed_surface.get_width() - 20, 60))
+            
             violation_text = f"Violations: {self.violation_count}"
             violation_surface = font.render(violation_text, True, (255, 255, 255))
             display.blit(violation_surface, (display.get_width() - violation_surface.get_width() - 20, 100))
@@ -1037,6 +1305,11 @@ class TrialManager:
         minutes = int(seconds // 60)
         seconds = int(seconds % 60)
         return f"{minutes:02}:{seconds:02}:{milliseconds:02}"
+
+    def close_session(self):
+        # Close the runs CSV file when the session ends
+        if self.csv_file:
+            self.csv_file.close()
 
 
 def game_loop(args):
@@ -1061,13 +1334,13 @@ def game_loop(args):
 
         hud = HUD(args.width, args.height, config_handler)
         world = World(client.get_world(), hud, args.filter, config_handler)
+        trial_manager = TrialManager(hud, config_handler, world.player, world)  # Pass the 'world' object here
         controller = DualControl(world, args.autopilot)
-        trial_manager = TrialManager(hud, config_handler)
 
         clock = pygame.time.Clock()
         while True:
             clock.tick_busy_loop(60)
-            if controller.parse_events(world, clock):
+            if controller.parse_events(world, clock, trial_manager):
                 return
 
             # Handle trial start and initiation
@@ -1084,7 +1357,7 @@ def game_loop(args):
             # Track and update speed during the trial
             v = world.player.get_velocity()
             speed = 2.23694 * math.sqrt(v.x**2 + v.y**2 + v.z**2)  # Convert m/s to mph
-            trial_manager.track_speed(speed)
+            trial_manager.track_speed(speed, world.player)  # Pass world.player here as well
 
             world.tick(clock)
             world.render(display)
